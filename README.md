@@ -12,11 +12,11 @@ The script runs in python 2.7. You will need biopython installed. You will also 
 
 ### Running the pipeline
 
-The rest of the python scripts synthesize these pairwise genome alignments into multiple genome alignments across taxa. ```maf_parser.py``` launches the pipeline. We used the command:
+The script ```chemo_finder.py``` launches the pipeline. 
 
 ```
-python maf_parser.py -i alignments -s AMEL -t AFLO,EMEX,BIMP,BTER,MQUA,HLAB,CCAL,MROT,LALB,DNOV -f gffs \
--w 500 -z 250 -o AMEL_base -m 8 -c bees.tree -p 14 -k AMEL_all_scafs.txt
+python chemo_finder.py -p 20 -c genomes.config -f or -i 0 -l 350 -b or_results \
+-t tblastn_hits_dir -r all_or_iter_0.fa 
 ```
 
 ### Iterating the pipeline
