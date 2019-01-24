@@ -1,8 +1,11 @@
 # README
 
 Script for identifying chemosensory genes in genome sequence. The inspiration and steps are largely drawn from:
+
 Zhou et al. 2012 Phylogenetic and transcriptomic analysis of chemosensory receptors in a pair of divergent ant species reveals sex-specific signatures of odor coding. PLoS Genet. 8:e1002930.
+
 and
+
 Zhou et al. 2015 Chemoreceptor evolution in Hymenoptera and its implications for the evolution of eusociality. GBE. 7(8): 2407–2416.
 
 However, there are many iterations of this type of pipeline and all seem generally effective. I don't expect that this version is substantially better (and hopefully isn't much worse) than those used previously.
@@ -15,9 +18,13 @@ The script runs in ```python 2.7```. You will need ```biopython``` installed. Yo
 
 ### Using BLAST to find possible hits.
 The first step is to use ```TBLASTN``` to find regions that potentially contain a full length gene of interest. There is nothing special about these commands but the output does need to be in a particular format (```-outfmt "6 qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore qframe sframe"```). So, for example:
+
 ```makeblastdb -in AMEL_genome.fasta -out AMEL_genome_db -dbtype nucl```
+
 followed by:
+
 ```tblastn -query or_ref_seqs.fa -db AMEL_genome_db -outfmt "6 qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore qframe sframe" -out tblastn_hits_dir/AMEL_or_iter_0_1000.txt -evalue 1000```
+
 Where ```AMEL_genome.fasta``` is a fasta file of the genome of interest and ```or_ref_seqs.fa``` is fasta formatted protein sequences from the gene family of interest.
 
 ### Running the pipeline
