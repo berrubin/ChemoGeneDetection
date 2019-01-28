@@ -1,3 +1,4 @@
+#!/usr/local/bin/python
 import sys
 import multiprocessing
 from multiprocessing import Pool
@@ -7,11 +8,12 @@ import os
 from Bio import SeqIO
 import numpy
 from optparse import OptionParser
+from glob import glob
 
 parser = OptionParser()
 
-parser.add_option("-p", "--num_threads", dest = "num_threads", type = int, default = 1, help = "Number of cores to use.")
-parser.add_option("-c", "--genomes_file", dest = "genomes_file", type = str, help = "File with paths to genome fastas")
+parser.add_option("-p", "--num_threads", dest = "num_threads", type = int, default = 1, help = "Number of cores to use.") #at the moment, this is very simple. One core is used per species.
+parser.add_option("-c", "--genomes_file", dest = "genomes_file", type = str, help = "File with paths to genome fastas.")
 parser.add_option("-r", "--reference_file", dest = "reference_file", type = str, help = "Seed protein sequences")
 parser.add_option("-f", "--family", dest = "family", default = "or", type = str, help = "Receptor family (e.g., or, gr)")
 parser.add_option("-i", "--iteration", dest = "iteration", type = int, default = 0, help = "Iteration")
@@ -56,14 +58,109 @@ else:
 def main():
     if not os.path.exists(options.base_dir):
         os.mkdir(options.base_dir)
-    work_list = []
     pool = multiprocessing.Pool(processes = options.num_threads)
     genome_dic = read_config(options.genomes_file)
+    prot_dic = {}
+    reader = SeqIO.parse(options.reference_file, format = 'fasta')
+    for rec in reader:
+        prot_dic[rec.id] = str(rec.seq)
+
     for species, genome in genome_dic.items():
-        work_list.append([species, genome, FAMILY, CUR_ITER])
-    pool.map_async(parse_blast, work_list).get(9999999)
-    pool.close()
-    pool.join()
+        possible_list = possible_scafs(species)
+        blast_dic = read_blast_file(species)
+        work_list = []
+#        cur_genome_dic = {}
+        reader = SeqIO.parse(genome, format = 'fasta')
+        for rec in reader:            
+            if rec.id in possible_list:
+#                cur_genome_dic[rec.id] = str(rec.seq)
+                work_list.append([species, genome, FAMILY, CUR_ITER, rec.id, str(rec.seq), prot_dic, blast_dic[rec.id]])
+            #parse_blast([species, genome, FAMILY, CUR_ITER, rec.id])
+
+
+        pool.map_async(parse_blast, work_list).get(9999999)
+        pool.close()
+        pool.join()
+    for species in genome_dic.keys():
+        cat_scaffold_outputs(species)
+
+def possible_scafs(species):
+    reader = open("%s/%s_%s_iter_%s_%s.txt" % (options.tblastn_dir, species, FAMILY, CUR_ITER, EVALUE), 'rU')
+    scaff_list = []
+    for line in reader:
+        cur_line = line.split()
+        scaff_list.append(cur_line[1])
+    return list(set(scaff_list))
+
+def read_blast_file(species):
+    reader = open("%s/%s_%s_iter_%s_%s.txt" % (options.tblastn_dir, species, FAMILY, CUR_ITER, EVALUE), 'rU')
+    file_dic = {}
+    scaf_dic = {}
+    for line in reader:
+        if "altto" in line:
+            continue
+        cur_line = line.split()
+#        if cur_line[1] != scaffold:
+#            continue
+        if "PSE" in cur_line[0]:
+            continue
+        if float(cur_line[10]) > EVALUE:
+            continue
+        if scaf_dic.get(cur_line[1], None) == None:
+            scaf_dic[cur_line[1]] = {}
+        if scaf_dic[cur_line[1]].get(cur_line[0], None) == None:# not in scaf_dic[cur_line[1]].keys():
+            scaf_dic[cur_line[1]][cur_line[0]] = []
+        scaf_dic[cur_line[1]][cur_line[0]].append(line.strip())
+    return scaf_dic
+#        if cur_line[0] not in file_dic.keys():
+#            file_dic[cur_line[0]] = []
+#        file_dic[cur_line[0]].append(line.strip())
+
+
+def cat_scaffold_outputs(species):
+    if USE_MIN_LEN:
+        length_param = MIN_LEN
+    else:
+        length_param = PROP_SHORT
+    rename_dic = {}
+    with open("%s/%s_iter_%s_%s_%s_pep.faa" % (GENES_DIR, species, CUR_ITER, FAMILY, length_param), 'w') as outfile:
+        cur_index = 1
+        for fname in glob("%s/%s_scaffolds/%s_iter_%s_%s_%s_*_pep.faa" % (GENES_DIR, species, CUR_ITER, FAMILY, length_param)):
+            cur_scaf = fname.split("_")[-2]
+            rename_dic[cur_scaf] = {}
+            reader = SeqIO.parse(fname, format = 'fasta')
+            for rec in reader:
+                outfile.write(">%s_%s_%s\n%s\n" % (species, FAMILY, cur_index, str(rec.seq)))
+                rename_dic[cur_scaf][rec.id] = "%s_%s_%s" % (species, FAMILY, cur_index)
+                cur_index += 1
+    outfile.close()
+    with open("%s/%s_iter_%s_%s_%s_trans.fna" % (GENES_DIR, species,CUR_ITER, FAMILY, length_param), 'w') as outfile:
+        for fname in glob("%s/%s_scaffolds/%s_iter_%s_%s_%s_*_trans.fna" % (GENES_DIR, species, CUR_ITER, FAMILY, length_param)):
+            cur_scaf = fname.split("_")[-2]
+            reader = SeqIO.parse(fname, format = 'fasta')
+            for rec in reader:
+                outfile.write(">%s\n%s\n" % (rename_dic[cur_scaf][rec.id], str(rec.seq)))
+    outfile.close()
+    with open("%s/%s_iter_%s_%s_%s.gff" % (GENES_DIR, species, CUR_ITER, FAMILY, length_param), 'w') as outfile:
+        for fname in glob("%s/%s_scaffolds/%s_iter_%s_%s_%s_*.gff" % (GENES_DIR, species, CUR_ITER, FAMILY, length_param)):
+            reader = open(fname, 'rU')
+            for line in reader:
+                cur_line = line.split()
+                cur_scaf = cur_line[0]
+                if cur_line[2] in ["gene", "mRNA"]:
+                    cur_gene = cur_line[8].split(";")[0][3:]
+                else:
+                    cur_gene = cur_line[8].split("-RA")[0][3:]
+                outfile.write(line.replace(cur_gene, rename_dic[cur_scaf][cur_gene]))
+    outfile.close()
+    with open("%s/%s_iter_%s_%s_%s_cds.fna" % (GENES_DIR, species, CUR_ITER, FAMILY, length_param), 'w') as outfile:
+        for fname in glob("%s/%s_scaffolds/%s_iter_%s_%s_%s_*_cds.fna" % (GENES_DIR, species, CUR_ITER, FAMILY, length_param)):
+            cur_scaf = fname.split("_")[-2]
+            reader = SeqIO.parse(fname, format = 'fasta')
+            for rec in reader:
+                outfile.write(">%s\n%s\n" % (rename_dic[cur_scaf][rec.id], str(rec.seq)))
+    outfile.close()
+                                  
 
 def read_config(config_file):
     reader = open(config_file, 'rU')
@@ -80,29 +177,11 @@ def parse_blast(param_list):
     genome_file = param_list[1]
     family = param_list[2]
     iteration = param_list[3]
-    genome_dic = {}
-    reader = SeqIO.parse(genome_file, format = 'fasta')
-    
-    for rec in reader:
-        genome_dic[rec.id] = str(rec.seq)
-    prot_dic = {}
-    reader = SeqIO.parse(options.reference_file, format = 'fasta')
-    for rec in reader:
-        prot_dic[rec.id] = str(rec.seq)
-    reader = open("%s/%s_%s_iter_%s_%s.txt" % (options.tblastn_dir, species, family, iteration, EVALUE), 'rU')
-    file_dic = {}
+    scaffold = param_list[4]
+    scaf_seq = param_list[5]
+    prot_dic = param_list[6]
+    file_dic = param_list[7]
     scaf_regions_dic = {}
-    for line in reader:
-        if "altto" in line:
-            continue
-        cur_line = line.split()
-        if "PSE" in cur_line[0]:
-            continue
-        if float(cur_line[10]) > EVALUE:
-            continue
-        if cur_line[0] not in file_dic.keys():
-            file_dic[cur_line[0]] = []
-        file_dic[cur_line[0]].append(line.strip())
     for gene, lines in file_dic.items():
         hsp_scaf_dic = {}
         hsp_list = []
@@ -142,23 +221,26 @@ def parse_blast(param_list):
                 if hsp.scaf not in scaf_regions_dic.keys():
                     scaf_regions_dic[hsp.scaf] = []
                 if USE_MIN_LEN:
-                    if hsp.send - hsp.sstart < PROP_SHORT*(len(prot_dic[gene])*3.0):
+                    if hsp.send - hsp.sstart < 3*MIN_LEN:
                         continue
                 else:
-                    if hsp.send - hsp.sstart < 3*MIN_LEN:
+                    if hsp.send - hsp.sstart < PROP_SHORT*(len(prot_dic[gene])*3.0):
                         continue
                 scaf_regions_dic[hsp.scaf].append(GeneRegion(hsp.sstart, hsp.send, hsp.scaf, hsp.frame, numpy.sum(hsp.bits), gene))
     ors_list = []
     if not os.path.isdir(GENES_DIR):
         os.mkdir(GENES_DIR)
+    if not os.path.isdir("%s/%s_scaffolds" % (GENES_DIR, species)):
+        os.mkdir("%s/%s_scaffolds" % (GENES_DIR, species))
     if USE_MIN_LEN:
         length_param = MIN_LEN
     else:
         length_param = PROP_SHORT
-    success_file = open("%s/%s_iter_%s_%s_%s_pep.faa" % (GENES_DIR, species, iteration, family, length_param), 'w')
-    success_cds = open("%s/%s_iter_%s_%s_%s.fna" % (GENES_DIR, species, iteration, family, length_param), 'w')
-    success_trans = open("%s/%s_iter_%s_%s_%s_trans.fna" % (GENES_DIR, species, iteration, family, length_param), 'w')
-    success_gff = open("%s/%s_iter_%s_%s_%s.gff" % (GENES_DIR, species, iteration, family, length_param), 'w')
+    success_file = open("%s/%s_scaffolds/%s_iter_%s_%s_%s_%s_pep.faa" % (GENES_DIR, species, species, iteration, family, length_param, scaffold), 'w')
+    success_cds = open("%s/%s_scaffolds/%s_iter_%s_%s_%s_%s_cds.fna" % (GENES_DIR, species, species, iteration, family, length_param, scaffold), 'w')
+    success_trans = open("%s/%s_scaffolds/%s_iter_%s_%s_%s_%s_trans.fna" % (GENES_DIR, species, species, iteration, family, length_param, scaffold), 'w')
+    success_gff = open("%s/%s_scaffolds/%s_iter_%s_%s_%s_%s.gff" % (GENES_DIR, species, species, iteration, family, length_param, scaffold), 'w')
+    any_successes = False
     if not os.path.isdir(REGIONAL_DIR):
         os.mkdir(REGIONAL_DIR)
     if not os.path.isdir("%s/%s" % (REGIONAL_DIR, species)):
@@ -170,7 +252,8 @@ def parse_blast(param_list):
         y = 0
         new_region_list = []
         for reg in region_list:
-            reg_len, align_score, new_start, new_end = protein_length(reg, species, family, iteration, prot_dic, genome_dic)
+#            reg_len, align_score, new_start, new_end = protein_length(reg, species, family, iteration, prot_dic, genome_dic)
+            reg_len, align_score, new_start, new_end = protein_length(reg, species, family, iteration, prot_dic, scaf_seq)
             reg.prot_len = reg_len
             reg.align_score = align_score
             if USE_MIN_LEN:
@@ -231,9 +314,12 @@ def parse_blast(param_list):
             if cur_start < 0:
                 cur_start = 0
             cur_end = region.end + FLANK_SIZE
-            if cur_end > len(genome_dic[region.scaf]):
-                cur_end = len(genome_dic[region.scaf])
-            outfile.write(">%s_%s_%s_%s\n%s\n" % (region.scaf, region.start, region.end, region.query[0:20], genome_dic[region.scaf][cur_start:cur_end]))
+#            if cur_end > len(genome_dic[region.scaf]):
+            if cur_end > len(scaf_seq):
+#                cur_end = len(genome_dic[region.scaf])
+                cur_end = len(scaf_seq)
+#            outfile.write(">%s_%s_%s_%s\n%s\n" % (region.scaf, region.start, region.end, region.query[0:20], genome_dic[region.scaf][cur_start:cur_end]))
+            outfile.write(">%s_%s_%s_%s\n%s\n" % (region.scaf, region.start, region.end, region.query[0:20], scaf_seq[cur_start:cur_end]))
             outfile.close()
             if PREDICTOR == "exonerate":
                 cmd = [EXONERATE_PATH, "--forcegtag", "--exhaustive", "y", "--model", "protein2genome", "--showtargetgff", "true", "--verbose", "0", "--showalignment", "no", "--showvulgar", "no", "--bestn", "1", "%s/%s/%s_%s_%s_ref.fa" % (REGIONAL_DIR, species, region.scaf, region.start, region.end), "%s/%s/%s_%s_%s.fa" % (REGIONAL_DIR, species, region.scaf, region.start, region.end)]
@@ -260,6 +346,7 @@ def parse_blast(param_list):
                     success_file.write(">%s_%s_%s\n%s\n"% (species, family, gene_index, prot_seq))
                     success_cds.write(">%s_%s_%s\n%s\n"% (species, family, gene_index, cds_seq))
                     success_trans.write(">%s_%s_%s\n%s\n"% (species, family, gene_index, trans_seq))
+                    any_successes = True
                     gene_index += 1
                     success_file.flush()
                     success_trans.flush()
@@ -274,6 +361,11 @@ def parse_blast(param_list):
     success_gff.close()
     success_cds.close()
     success_trans.close()
+    if not any_successes:
+        os.remove("%s/%s_scaffolds/%s_iter_%s_%s_%s_%s_pep.faa" % (GENES_DIR, species, species, iteration, family, length_param, scaffold))
+        os.remove("%s/%s_scaffolds/%s_iter_%s_%s_%s_%s_cds.fna" % (GENES_DIR, species, species, iteration, family, length_param, scaffold))
+        os.remove("%s/%s_scaffolds/%s_iter_%s_%s_%s_%s_trans.fna" % (GENES_DIR, species, species, iteration, family, length_param, scaffold))
+        os.remove("%s/%s_scaffolds/%s_iter_%s_%s_%s_%s.gff" % (GENES_DIR, species, species, iteration, family, length_param, scaffold))
     #need to run "module add hmmer"
     
 #    if family == "ir":
@@ -300,7 +392,7 @@ def run_muscle(family, iteration, species):
     cmd = ["muscle", "-in", "%s/%s_AM_successes_%s_%s.faa" % (GENES_DIR, species, family, MIN_LEN), "-out", "%s/%s_AM_successes_%s_%s.afaa" % (GENES_DIR, species, family, MIN_LEN)]
     subprocess.call(cmd)
 
-def protein_length(region, species, family, iteration, prot_dic, genome_dic):
+def protein_length(region, species, family, iteration, prot_dic, scaf_seq):
     if region.prot_len != -9:
         return region.prot_len
     ref_file = open("%s/%s/%s_%s_%s_%s_ref.fa" % (REGIONAL_DIR, species, region.scaf, region.start, region.end, region.query), 'w')
@@ -313,14 +405,14 @@ def protein_length(region, species, family, iteration, prot_dic, genome_dic):
     if cur_start < 0:
         cur_start = 0
     cur_end = region.end + FLANK_SIZE
-    if cur_end > len(genome_dic[region.scaf]):
-        cur_end = len(genome_dic[region.scaf])
-    outfile.write(">%s_%s_%s_%s\n%s\n" % (region.scaf, region.start, region.end, region.query[0:20], genome_dic[region.scaf][cur_start:cur_end]))
+#    if cur_end > len(genome_dic[region.scaf]):
+    if cur_end > len(scaf_seq):
+#        cur_end = len(genome_dic[region.scaf])
+        cur_end = len(scaf_seq)
+#    outfile.write(">%s_%s_%s_%s\n%s\n" % (region.scaf, region.start, region.end, region.query[0:20], genome_dic[region.scaf][cur_start:cur_end]))
+    outfile.write(">%s_%s_%s_%s\n%s\n" % (region.scaf, region.start, region.end, region.query[0:20], scaf_seq[cur_start:cur_end]))
     outfile.close()
-    if iteration == 0:
-        cmd = [EXONERATE_PATH, "--exhaustive", "y", "--forcegtag", "--model", "protein2genome", "--showtargetgff", "true", "--verbose", "0", "--showalignment", "no", "--showvulgar", "no", "--bestn", "1", "%s/%s/%s_%s_%s_%s_ref.fa" % (REGIONAL_DIR, species, region.scaf, region.start, region.end, region.query), "%s/%s/%s_%s_%s_%s.fa" % (REGIONAL_DIR, species, region.scaf, region.start, region.end, region.query)]
-    else:
-        cmd = [EXONERATE_PATH, "--exhaustive", "y", "--forcegtag", "--model", "protein2genome", "--showtargetgff", "true", "--verbose", "0", "--showalignment", "no", "--showvulgar", "no", "--bestn", "1", "%s/%s/%s_%s_%s_%s_ref.fa" % (REGIONAL_DIR, species, region.scaf, region.start, region.end, region.query), "%s/%s/%s_%s_%s_%s.fa" % (REGIONAL_DIR, species, region.scaf, region.start, region.end, region.query)]
+    cmd = [EXONERATE_PATH, "--exhaustive", "y", "--forcegtag", "--model", "protein2genome", "--showtargetgff", "true", "--verbose", "0", "--showalignment", "no", "--showvulgar", "no", "--bestn", "1", "%s/%s/%s_%s_%s_%s_ref.fa" % (REGIONAL_DIR, species, region.scaf, region.start, region.end, region.query), "%s/%s/%s_%s_%s_%s.fa" % (REGIONAL_DIR, species, region.scaf, region.start, region.end, region.query)]
     FNULL = open(os.devnull, 'w')
     with open("%s/%s/%s_%s_%s_%s.gff" % (REGIONAL_DIR, species, region.scaf, region.start, region.end, region.query), 'w') as outfile:
         subprocess.call(cmd, stdout = outfile, stderr=FNULL)

@@ -8,13 +8,13 @@ and
 
 Zhou et al. 2015 Chemoreceptor evolution in Hymenoptera and its implications for the evolution of eusociality. GBE. 7(8): 2407–2416.
 
-However, there are many iterations of this type of pipeline and all seem generally effective. I don't expect that this version is substantially better (and hopefully isn't much worse) than those used previously.
+However, there are many iterations of this type of pipeline and all seem generally effective. I don't expect that this version is substantially better (and hopefully isn't much worse) than those used previously. The basic procedure is to use ```TBLASTN``` to find locations of genes related to the family of interest in the target genome. These sequences are then fed to ```exonerate``` to construct a refined gene annotation.
 
 ## Getting Started
 
 ### Dependencies
 
-The script runs in ```python 2.7```. You will need ```biopython``` installed. You will also need an installation of ```BLAST``` and ```exonerate```.
+The script runs in ```python 2.7```. You will need ```biopython``` (https://biopython.org/) installed. You will also need an installation of ```BLAST``` (ftp://ftp.ncbi.nlm.nih.gov/blast/executables/blast+/LATEST/) and ```exonerate``` (https://www.ebi.ac.uk/about/vertebrate-genomics/software/exonerate).
 
 ### Using BLAST to find possible hits.
 The first step is to use ```TBLASTN``` to find regions that potentially contain a full length gene of interest. There is nothing special about these commands but the output does need to be in a particular format (```-outfmt "6 qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore qframe sframe"```). So, for example:
@@ -29,7 +29,7 @@ Where ```AMEL_genome.fasta``` is a fasta file of the genome of interest and ```o
 
 ### Running the pipeline
 
-The script ```chemo_finder.py``` launches the pipeline. 
+The script ```chemo_finder.py``` launches the pipeline annotation pipeline, taking the ```TBLASTN``` results as input. 
 
 #### Required parameters
 ```-c``` specifies the full path to the config file which just specifies where the genomes are. There are two tab delimited columns. The first is a four character taxon code and the second is the full path to the genome fasta file.
@@ -47,7 +47,7 @@ The script ```chemo_finder.py``` launches the pipeline.
 ```-x``` path to directory containing exonerate executable. If it is already in your path then there is no need to specify here.
 
 #### Optional parameters
-```-p``` specifies the number of cores to use. However, this only has any effect if multiple genomes are being examined. Just a single thread is used for each genome so if two genomes are being examined and two threads are available, then it will run ~twice as fast. Since I developed it to run simultaneously over ~20 genomes this worked perfectly for me but obviously this won't be the case for everyone. Splitting genomes into separate chromosomes and treating them as separate genomes would be an easy way to get around this limitation in lieu of me actually writing a more efficient way to thread it.
+```-p``` specifies the number of cores to use. Individual threads are allocated to individual scaffolds. This means that if all of the genes of interest are on a single scaffold then it will provide little speedup.
 
 ```-l``` is the minimum length of the protein sequence to be kept as a good sequence. Default is 350. This is generally appropriate for ORs and GRs.
 
